@@ -1,0 +1,201 @@
+from multiprocessing import Process, JoinableQueue
+import os, time, random
+import argparse
+import os
+import sys
+import shutil
+import json
+import glob
+import pickle
+import csv
+import numpy as np
+import zlib
+from time import time
+import time as tm
+import cv2
+from PIL import Image, ImageDraw, ImageFont
+
+from utils import detector_utils as detector_utils
+import tensorflow as tf
+import datetime
+import socket
+import zlib
+import math
+
+label = ["向左划","向右划","向下划","向上划","手推向远处","手从远处拉回","两根手指向左滑动","两根手指向右滑动","两根手指向下滑动",
+"两根手指向上滑动","两根手指推向远处","两根手指从远处拉回","手向前滚动","手向后滚动","顺时针转手","逆时针转手","用手放大","用手缩小",
+"两根手指放大","两根手指缩小","拇指向上","拇指向下","摇动手掌","停止","抖动手指","没有手势","其他手势"]
+
+font = ImageFont.truetype("simhei.ttf", 20, encoding="utf-8")
+txt_location = (440,60)
+fontScale = 1
+fontColor = (255,0,0)
+lineType = 2
+diss_time = 75 # about 2.5s
+
+def draw_text(cv2_img, txt):
+    pil_img = Image.fromarray(cv2_img)
+    draw = ImageDraw.Draw(pil_img)
+    draw.text(txt_location, str(txt), fontColor, font=font)
+    return np.array(pil_img)
+
+
+#====================UI process====================
+def ui(frm_q, ret_q, idx, args):
+    print('UI Process : %s' % os.getpid())
+    # camera config
+    cam_id = args.camera_id
+    video_height = args.video_height
+    video_width = args.video_width
+    cap = cv2.VideoCapture(cam_id)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, video_height) #height
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, video_width) #width
+    print("[UI] > initializing camera, please wait......")
+    tm.sleep(5)
+    print("[UI] > camera initialization done.")
+
+    #load hand detect model
+    hand_threshold = args.hand_threshold # hand detection threshold
+    print("[UI] > hand detection model loading......")
+    detection_graph, sess = detector_utils.load_inference_graph()
+    print("[UI] > hand detection model loaded, using threshold: %2f." % hand_threshold)
+
+    i = 0
+    j = 0
+    ready = False
+    go = False
+    predict_txt = "None"
+    txt_showned_time = -1
+    init = True
+
+    while True:
+        frames = []
+        ret, frame = cap.read()
+        if init:
+            ready = True
+            init = False
+        elif ret_q.full() and frm_q.empty():
+            predict_txt = ret_q.get()
+            if predict_txt == -999:
+                print("[UI] > background process has occurred fatal error.")
+                sys.exit(1)
+            txt_showned_time = 0
+            ret_q.task_done()
+            i = 0
+            j = 0
+            ready = True #ready to capture frame
+
+        #draw txt in camera capture windows
+        if txt_showned_time != -1 and txt_showned_time <= diss_time:
+            txted_frame = draw_text(frame, predict_txt)
+            txt_showned_time = txt_showned_time + 1
+        else:
+            txted_frame = frame
+            txt_showned_time = -1
+
+        # show a frame in windows
+        cv2.imshow("FengHuo Gesture Recognition System", txted_frame)
+        #hand detection trigger
+        image_np = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        if not go and ready:
+            boxes, scores = detector_utils.detect_objects(image_np, detection_graph, sess)
+            max = np.max(scores)
+            if max > hand_threshold:
+                go = True
+
+        if ready and go:
+            if i == idx[j] and j < len(idx):
+                frm_q.put(Image.fromarray(np.uint8(cv2.resize(frame, (120, 100)))))
+                j = j  + 1
+            if j >= len(idx):
+                ready = False
+                go = False
+                j = 0#reset
+            i = (i + 1) % (math.floor(idx[-1]) + 1)
+
+        k = cv2.waitKey(1) & 0xFF
+        if k == ord("q"):
+            break
+    cap.release()
+    cv2.destroyAllWindows()
+
+
+#====================background process====================
+def background(frm_q, ret_q, host, port, idx):
+    print('background Process : %s' % os.getpid())
+    sock = socket.socket()
+    sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+    try:
+        sock.connect((host, port))
+    except socket.error as e:
+        print("[background] > connection error caused by %s" % e)
+        if ret_q.empty():
+            ret_q.put(-999)
+        sys.exit(1)
+    print("[background] > connect to %s:%2d" % (host, port))
+    while True:
+        frames = []
+        for i in range(len(idx)):
+            frame = frm_q.get(True)
+            print("[background] > send %d th frame" % i)
+            frames.append(frame)
+        ret = sock.send(zlib.compress(pickle.dumps(frames)))
+        if ret == 0:
+            sock.send("None")
+            raise RuntimeError("socket connection broken")
+        #receive data from remote GPU server
+        recv = sock.recv(1024) #int:
+        if not recv:
+            sock.send("None")
+            raise RuntimeError("socket connection broken")
+        predict = int(recv)
+        print("[background] > predict class: %d" % predict)
+        print("[background] > predict label: %s" % label[predict])#predict result
+        if not ret_q.full():
+            ret_q.put(label[predict])#notify UI
+        else:
+            ret_q.join()#block
+
+
+def arg_parse():
+    parser = argparse.ArgumentParser(description='FengHuo Hand Gesture client side.')
+    parser.add_argument('--hand_threshold', '-t', type=float, default=0.1,
+            help='hand detection threshold.')
+    parser.add_argument('--camera_id', '-n', type=int, default=0, help='id of camera for use.')
+    parser.add_argument('--video_height', '-y', type=int, default=480,
+            help='camera capture height.')
+    parser.add_argument('--video_width', '-x', type=int, default=640,
+            help='camera capture width.')
+    parser.add_argument('--port', '-p', type=int, default=9999, help='port to connect.')
+    parser.add_argument('--host', '-H', default="127.0.0.1",
+            help="host to connect.")
+    parser.add_argument('--frm_number', '-f', type=int, default=26,
+            help="number of frame sampled by web camera.")
+    args = parser.parse_args()
+    if args.frm_number <= 0 or args.frm_number > 30:
+        parser.print_help()
+        sys.exit(1)
+    return args
+
+
+frm_idx = [0, 2, 5, 7, 10, 12, 15, 17, 20, 22, 25, 27, 30, 32, 35, 37, 40, 42, 45, 47, 50, 52, 55, 57, 60, 62, 65, 67, 70, 72] #30frm
+def main():
+    args = arg_parse()
+    frm_cnt = args.frm_number
+    host = args.host
+    port = args.port
+    idx = frm_idx[0:frm_cnt]
+    assert len(idx) == frm_cnt
+    frm_q = JoinableQueue(len(idx)) #queue to transfer frame data.
+    ret_q = JoinableQueue(1)#queue used to send predict result to ui process.
+    uiProcess = Process(target=ui, args=(frm_q, ret_q, idx, args))
+    backgroundProcess = Process(target=background, args=(frm_q, ret_q, host, port, idx))
+    uiProcess.start()
+    backgroundProcess.start()
+    # 等待uiProcess结束:
+    uiProcess.join()
+    backgroundProcess.terminate()
+
+
+if __name__=='__main__':
+    main()

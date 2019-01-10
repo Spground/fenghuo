@@ -1,0 +1,4 @@
+{
+    "best_checkpoint": "model/model_best.pth.tar",
+    "num_classes": 27
+}
