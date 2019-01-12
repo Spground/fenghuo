@@ -28,8 +28,8 @@ from PIL import Image, ImageDraw, ImageFont
 from utils import detector_utils as detector_utils
 import tensorflow as tf
 import datetime
- 
-config_file =  "configs/single_example_test_config.json"   
+
+config_file =  "configs/single_example_test_config.json"
 device = torch.device("cpu")
 label = ["向左划","向右划","向下划","向上划","手推向远处","手从远处拉回","两根手指向左滑动","两根手指向右滑动","两根手指向下滑动",
 "两根手指向上滑动","两根手指推向远处","两根手指从远处拉回","手向前滚动","手向后滚动","顺时针转手","逆时针转手","用手放大","用手缩小",
@@ -59,7 +59,7 @@ def load_model():
     if os.path.isfile(config['best_checkpoint']):
         checkpoint = torch.load(config['best_checkpoint'], map_location="cpu")
         model.load_state_dict(checkpoint['state_dict'])
-        print("=> load model done!") 
+        print("=> load model done!")
 
     transform = Compose([
         CenterCrop(84),
@@ -101,9 +101,9 @@ def load_model():
          batch_size=config['batch_size'], shuffle=False,
          num_workers=config['num_workers'], pin_memory=True,
          drop_last=False)
-    
+
     assert len(train_data.classes) == config["num_classes"]
-    return (predict_loader, model, train_data.classes_dict)  
+    return (predict_loader, model, train_data.classes_dict)
 
 def predict(predict_loader, model, class_to_idx=None):
     #switch model to test
@@ -113,13 +113,13 @@ def predict(predict_loader, model, class_to_idx=None):
         for i, (input, target) in enumerate(predict_loader):
             input = input.to(device)
             #predict
-            output = model(input)          
+            output = model(input)
             logits_matrix.append(output.detach().cpu().numpy())
             logits_matrix = np.concatenate(logits_matrix)
             predict = np.argmax(logits_matrix, axis=1) #get max element's index
             print(class_to_idx[predict[0]])#predict result
 
-#====================client====================    
+#====================client====================
 
 dataset_dir = "datasets/pending"
 #idx = [0, 2, 5, 7, 10, 12, 15, 17, 20, 22, 25, 27, 30, 32, 35, 37, 40, 42, 45, 47, 50, 52, 55, 57, 60, 62, 65, 67, 70, 72]
@@ -149,8 +149,8 @@ def client(q, p):
     drop = 5#drop first 5 and last 5
     predict_txt = "None"
     txt_showned_time = -1
-    while True: 
-        frames = []    
+    while True:
+        frames = []
         ret, frame = cap.read()
         if p.full() or q.empty():
             if not p.empty():
@@ -160,7 +160,7 @@ def client(q, p):
                 i = 0
                 j = 0
             ready = True #ready to capture frame
-        
+
         #draw txt
         if txt_showned_time != -1 and txt_showned_time <= diss_time:
             txted_frame = draw_text(frame, predict_txt)
@@ -184,13 +184,13 @@ def client(q, p):
             if i == idx[j] and j < len(idx):
                 #print("======sample %dth frame=====" % j)
                 q.put(Image.fromarray(np.uint8(cv2.resize(frame, (120, 100)))))
-                j = j  + 1 
+                j = j  + 1
             if j >= len(idx):
                 ready = False
                 go = False
                 j = 0#reset
-            i = (i + 1) % 60    
-        
+            i = (i + 1) % 60
+
         k = cv2.waitKey(1) & 0xFF
         #if k == ord('a'):
             #go = True
@@ -201,7 +201,7 @@ def client(q, p):
     cap.release()
     cv2.destroyAllWindows()
 
-#====================server==================== 
+#====================server====================
 transform = Compose([
     CenterCrop(84),
     ToTensor(),
@@ -228,7 +228,7 @@ def server(q, p):
         model.eval()
         with torch.no_grad():
             input = input.to(device)
-            output = model(input)          
+            output = model(input)
             logits_matrix.append(output)
             logits_matrix = np.concatenate(logits_matrix)
             predict = np.argmax(logits_matrix, axis=1) #get max element's index

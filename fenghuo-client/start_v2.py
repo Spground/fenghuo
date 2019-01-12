@@ -21,27 +21,49 @@ import datetime
 import socket
 import zlib
 import math
+from context.context import Context
+from callbacks.callback import FengHuoCallBack
+from protocol.predict_protocol import SimplePredictionProtocol
 
 label = ["向左划","向右划","向下划","向上划","手推向远处","手从远处拉回","两根手指向左滑动","两根手指向右滑动","两根手指向下滑动",
 "两根手指向上滑动","两根手指推向远处","两根手指从远处拉回","手向前滚动","手向后滚动","顺时针转手","逆时针转手","用手放大","用手缩小",
 "两根手指放大","两根手指缩小","拇指向上","拇指向下","摇动手掌","停止","抖动手指","没有手势","其他手势"]
 
 font = ImageFont.truetype("simhei.ttf", 20, encoding="utf-8")
-txt_location = (440,60)
+small_font = ImageFont.truetype("simhei.ttf", 14, encoding="utf-8")
 fontScale = 1
 fontColor = (255,0,0)
 lineType = 2
 diss_time = 75 # about 2.5s
+line_colors = [(0xFF, 0x00, 0x00), (0x30, 0x30, 0xFF), (0x00, 0xFF, 0x00), (0xCD, 0x26, 0x7D), (0x22, 0x22, 0xB2)]
+anchor = (600, 60)
+#prob line config
+base_line = 300#the length of line while probability is 100%
+margin_top = 10
+line_width = 20
+margin_left = 20
 
-def draw_text(cv2_img, txt):
+def draw_text(cv2_img, txt, pred_top5=None):
     pil_img = Image.fromarray(cv2_img)
     draw = ImageDraw.Draw(pil_img)
-    draw.text(txt_location, str(txt), fontColor, font=font)
+    #draw prediction@1 text
+    draw.text(anchor, str(txt), fontColor, font=font)
+    #draw pred@5 bar
+    if not pred_top5 == None:
+        y = margin_top + anchor[1] + 50
+        x = anchor[0]
+        for i in range(5):
+            pred = pred_top5[i]
+            color = line_colors[i]
+            x_line_end = x + base_line*pred['prob']
+            draw.line([(x, y),(x_line_end, y)], fill=color, width=line_width)
+            draw.text((x_line_end + margin_left, y), "{:.2f}%  {}".format(pred['prob']*100, label[pred['label']]), color, font=small_font)
+            y = y + margin_top + line_width
     return np.array(pil_img)
 
 
 #====================UI process====================
-def ui(frm_q, ret_q, idx, args):
+def ui(frm_q, ret_q, idx, args, ctx):
     print('UI Process : %s' % os.getpid())
     # camera config
     cam_id = args.camera_id
@@ -75,10 +97,14 @@ def ui(frm_q, ret_q, idx, args):
             ready = True
             init = False
         elif ret_q.full() and frm_q.empty():
-            predict_txt = ret_q.get()
-            if predict_txt == -999:
+            simple_protocol = ret_q.get()
+            if simple_protocol == None:
                 print("[UI] > background process has occurred fatal error.")
                 sys.exit(1)
+            for callback in ctx.callbacks:
+                callback.onPredictTop1(None, simple_protocol.pred[0])
+                callback.onPredictTop5(None, simple_protocol.pred)
+            predict_txt = label[simple_protocol.pred[0]["label"]]
             txt_showned_time = 0
             ret_q.task_done()
             i = 0
@@ -87,7 +113,7 @@ def ui(frm_q, ret_q, idx, args):
 
         #draw txt in camera capture windows
         if txt_showned_time != -1 and txt_showned_time <= diss_time:
-            txted_frame = draw_text(frame, predict_txt)
+            txted_frame = draw_text(frame, predict_txt, simple_protocol.pred)
             txt_showned_time = txt_showned_time + 1
         else:
             txted_frame = frame
@@ -101,10 +127,14 @@ def ui(frm_q, ret_q, idx, args):
             boxes, scores = detector_utils.detect_objects(image_np, detection_graph, sess)
             max = np.max(scores)
             if max > hand_threshold:
+                for callback in ctx.callbacks:
+                    callback.onHandIn(None)
                 go = True
 
         if ready and go:
             if i == idx[j] and j < len(idx):
+                for callback in ctx.callbacks:
+                    callback.onFrameSampled(None, frame)
                 frm_q.put(Image.fromarray(np.uint8(cv2.resize(frame, (120, 100)))))
                 j = j  + 1
             if j >= len(idx):
@@ -144,15 +174,19 @@ def background(frm_q, ret_q, host, port, idx):
             sock.send("None")
             raise RuntimeError("socket connection broken")
         #receive data from remote GPU server
-        recv = sock.recv(1024) #int:
+        recv = sock.recv(65535) #SimplePredictionProtocol:
+        print("recive byte length : %d" % (len(recv)))
         if not recv:
             sock.send("None")
             raise RuntimeError("socket connection broken")
-        predict = int(recv)
-        print("[background] > predict class: %d" % predict)
-        print("[background] > predict label: %s" % label[predict])#predict result
+        simple_protocol = pickle.loads(zlib.decompress(recv), encoding='bytes')
+        print(type(simple_protocol))
+        print(simple_protocol.pred)
+        predict = simple_protocol.pred[0]["label"]
+        prob = simple_protocol.pred[0]["prob"]
+        print("[background] > predict@1 label:%s[%d]--%.4f" % (label[predict],predict, prob))
         if not ret_q.full():
-            ret_q.put(label[predict])#notify UI
+            ret_q.put(simple_protocol)#notify UI
         else:
             ret_q.join()#block
 
@@ -178,6 +212,26 @@ def arg_parse():
     return args
 
 
+class SimpleFengHuoCallBack(FengHuoCallBack):
+    def onHandIn(self, ctx):
+        self.print("Hands Come In.")
+
+    def onPredictTop1(self, ctx, prediction_top1):
+        self.print("pred@1: {:02d}:{:.2f}%".format(prediction_top1["label"], 100*prediction_top1["prob"]))
+
+    def onPredictTop5(self, ctx, prediction_top5):
+        s = "pred@5\n"
+        for pred in prediction_top5:
+            s += "{:02d}:{:.2f}%\n".format(pred["label"], 100*pred['prob'])
+        self.print(s)
+
+    def onFrameSampled(self, ctx, frm):
+        self.print("Frame Sampled.")
+
+    def print(self, str):
+        print("[simple_fenghuo_callback] > " + str)
+
+
 frm_idx = [0, 2, 5, 7, 10, 12, 15, 17, 20, 22, 25, 27, 30, 32, 35, 37, 40, 42, 45, 47, 50, 52, 55, 57, 60, 62, 65, 67, 70, 72] #30frm
 def main():
     args = arg_parse()
@@ -186,9 +240,15 @@ def main():
     port = args.port
     idx = frm_idx[0:frm_cnt]
     assert len(idx) == frm_cnt
+
+    #global context
+    simple_callback = SimpleFengHuoCallBack()
+    ctx = Context()
+    ctx.register(simple_callback)
+
     frm_q = JoinableQueue(len(idx)) #queue to transfer frame data.
     ret_q = JoinableQueue(1)#queue used to send predict result to ui process.
-    uiProcess = Process(target=ui, args=(frm_q, ret_q, idx, args))
+    uiProcess = Process(target=ui, args=(frm_q, ret_q, idx, args, ctx))
     backgroundProcess = Process(target=background, args=(frm_q, ret_q, host, port, idx))
     uiProcess.start()
     backgroundProcess.start()

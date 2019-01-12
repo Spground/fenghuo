@@ -12,7 +12,7 @@ import os
 import zlib
 import sys
 import argparse
-
+from protocol.predict_protocol import SimplePredictionProtocol
 
 config_file =  "configs/model_config.json"
 def load_model(device):
@@ -56,9 +56,10 @@ class RecognitionProtocol(Protocol):
         self.received_data = b''
         if len(frames) == self.factory.frm_cnt:
             #begin to predict
-            pred = self.predict(frames)
-            self.transport.write(str(pred).encode("UTF-8"))
-
+            pred_top5 = self.predict(frames)
+            simple_protocol = SimplePredictionProtocol(pred_top5)
+            compressed_data = zlib.compress(pickle.dumps(simple_protocol))
+            self.transport.write(compressed_data)
 
     def connectionMade(self):
         print("connection made!")
@@ -78,16 +79,24 @@ class RecognitionProtocol(Protocol):
         imgs = imgs.permute(1,0,2,3) # C*H*W
         input = torch.Tensor(imgs)
         input = torch.unsqueeze(input , 0)
-        logits_matrix = []
         self.factory.model.eval()
+        s = 0
         with torch.no_grad():
             input = input.to(self.factory.device)
             output = self.factory.model(input)
-            logits_matrix.append(output.detach().cpu().numpy())
-            logits_matrix = np.concatenate(logits_matrix)
-            predict = np.argmax(logits_matrix, axis=1) #get max element's index
-        print(predict[0])
-        return predict[0]
+            output = torch.nn.Softmax(dim=1)(output)
+            pred = output.detach().cpu().numpy()[0]
+            top5_idx = np.argpartition(pred, -5)[-5:]
+            top5_prob = pred[top5_idx]
+            top5_idx_sorted = top5_idx[np.argsort(top5_prob)]
+            pred_top5 = []
+            for idx in reversed(top5_idx_sorted):
+                pred_dic = {}
+                pred_dic["label"] = idx
+                pred_dic["prob"] = pred[idx]
+                pred_top5.append(pred_dic)
+        print(pred_top5)
+        return pred_top5
 
 
 class RecognitionFactory(Factory):
