@@ -50,6 +50,9 @@ def draw_text(cv2_img, txt, pred_top5=None):
     #calculate other anchor points.
     anchor = (0.5*w, 0.05*h)
     base_line = (w-anchor[0])*0.7
+    line_width = h // 36
+    margin_left = w // 64
+    margin_top = margin_left // 2
     pil_img = Image.fromarray(cv2_img)
     draw = ImageDraw.Draw(pil_img)
     #draw prediction@1 text
