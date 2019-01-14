@@ -31,7 +31,7 @@ label = ["向左划","向右划","向下划","向上划","手推向远处","手�
 
 font = ImageFont.truetype("simhei.ttf", 20, encoding="utf-8")
 ascent, descent = font.getmetrics()
-small_font = ImageFont.truetype("simhei.ttf", 8, encoding="utf-8")
+small_font = ImageFont.truetype("simhei.ttf", 10, encoding="utf-8")
 fontScale = 1
 fontColor = (255,0,0)
 lineType = 2
@@ -49,7 +49,7 @@ def draw_text(cv2_img, txt, pred_top5=None):
     w = cv2_img.shape[1]
     #calculate other anchor points.
     anchor = (0.5*w, 0.05*h)
-    base_line = (w-anchor[0])*0.6
+    base_line = (w-anchor[0])*0.7
     line_width = h // 36
     margin_left = w // 64
     margin_top = margin_left // 2
