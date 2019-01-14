@@ -36,7 +36,7 @@ fontColor = (255,0,0)
 lineType = 2
 diss_time = 75 # about 2.5s
 line_colors = [(0xFF, 0x00, 0x00), (0x30, 0x30, 0xFF), (0x00, 0xFF, 0x00), (0xCD, 0x26, 0x7D), (0x22, 0x22, 0xB2)]
-anchor = (600, 60)
+anchor = (440, 60)
 #prob line config
 base_line = 300#the length of line while probability is 100%
 margin_top = 10
