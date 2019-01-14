@@ -30,6 +30,7 @@ label = ["向左划","向右划","向下划","向上划","手推向远处","手�
 "两根手指放大","两根手指缩小","拇指向上","拇指向下","摇动手掌","停止","抖动手指","没有手势","其他手势"]
 
 font = ImageFont.truetype("simhei.ttf", 20, encoding="utf-8")
+ascent, descent = font.getmetrics()
 small_font = ImageFont.truetype("simhei.ttf", 14, encoding="utf-8")
 fontScale = 1
 fontColor = (255,0,0)
@@ -44,13 +45,18 @@ line_width = 20
 margin_left = 20
 
 def draw_text(cv2_img, txt, pred_top5=None):
+    h = cv2_img.shape[0]
+    w = cv2_img.shape[1]
+    #calculate other anchor points.
+    anchor = (0.5*w, 0.05*h)
+    base_line = (w-anchor[0])*0.7
     pil_img = Image.fromarray(cv2_img)
     draw = ImageDraw.Draw(pil_img)
     #draw prediction@1 text
     draw.text(anchor, str(txt), fontColor, font=font)
     #draw pred@5 bar
     if not pred_top5 == None:
-        y = margin_top + anchor[1] + 50
+        y = 1.5*margin_top + anchor[1] + ascent + descent
         x = anchor[0]
         for i in range(5):
             pred = pred_top5[i]
