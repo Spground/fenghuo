@@ -24,6 +24,7 @@ import math
 from context.context import Context
 from callbacks.callback import FengHuoCallBack
 from protocol.predict_protocol import SimplePredictionProtocol
+import pyttsx3
 
 label = ["向左划","向右划","向下划","向上划","手推向远处","手从远处拉回","两根手指向左滑动","两根手指向右滑动","两根手指向下滑动",
 "两根手指向上滑动","两根手指推向远处","两根手指从远处拉回","手向前滚动","手向后滚动","顺时针转手","逆时针转手","用手放大","用手缩小",
@@ -43,6 +44,7 @@ base_line = 300#the length of line while probability is 100%
 margin_top = 10
 line_width = 20
 margin_left = 20
+
 
 def draw_text(cv2_img, txt, pred_top5=None):
     h = cv2_img.shape[0]
@@ -151,7 +153,6 @@ def ui(frm_q, ret_q, idx, args, ctx):
                 go = False
                 j = 0#reset
             i = (i + 1) % (math.floor(idx[-1]) + 1)
-
         k = cv2.waitKey(1) & 0xFF
         if k == ord("q"):
             break
@@ -161,6 +162,7 @@ def ui(frm_q, ret_q, idx, args, ctx):
 
 #====================background process====================
 def background(frm_q, ret_q, host, port, idx):
+    engine = pyttsx3.init();
     print('background Process : %s' % os.getpid())
     sock = socket.socket()
     sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
@@ -192,6 +194,9 @@ def background(frm_q, ret_q, host, port, idx):
         print(type(simple_protocol))
         print(simple_protocol.pred)
         predict = simple_protocol.pred[0]["label"]
+        predict_txt = label[simple_protocol.pred[0]["label"]]
+        engine.say(predict_txt)#voice
+        engine.runAndWait()
         prob = simple_protocol.pred[0]["prob"]
         print("[background] > predict@1 label:%s[%d]--%.4f" % (label[predict],predict, prob))
         if not ret_q.full():
